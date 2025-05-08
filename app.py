@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-
-# 한글 포트 (너널 포트가 존재할 경우만 적용)
-plt.rcParams['font.family'] = 'NanumGothic'
-plt.rcParams['axes.unicode_minus'] = False
+import matplotlib.font_manager as fm
 
 st.set_page_config(page_title="중고차 최신시세조회", page_icon="🚗", layout="centered")
+
+# ✅ 한글 폰트 설정 (맑은 고딕 또는 나눔고딕)
+plt.rcParams['font.family'] = 'Malgun Gothic' if 'Malgun Gothic' in fm.get_fontconfig_fonts() else 'NanumGothic'
+plt.rcParams['axes.unicode_minus'] = False
 
 @st.cache_data
 def load_data():
@@ -14,71 +15,47 @@ def load_data():
 
 df = load_data()
 
-# 기본사 값
+st.markdown("<h1 style='color:gold;'>🚗 중고차 최신시세조회</h1>", unsafe_allow_html=True)
+
+# 기본값: 현대 아반떼
 default_company = "현대"
-default_model = "그래낭 IG"
+default_model = "아반떼"
 
-st.markdown("""
-<h1 style='color:gold;'>🚗 중고차 최신시세조회</h1>
-중고차 가격 데이터를 바탕으로 연시별, 키로수별 평균 시세를 통계창으로 해석합니다.<br>
-제조사를 선택하고, 모델과 연시를 고르세요.
-""", unsafe_allow_html=True)
+# 🔍 필터 선택
+company_list = sorted(df["회사"].dropna().unique())
+selected_company = st.selectbox("🚘 제조사 선택", company_list, index=company_list.index(default_company) if default_company in company_list else 0)
 
-# 회사 선택
-company_list = sorted(df["회사"].dropna().unique().tolist())
-selected_company = st.selectbox("🚗 회사 선택", company_list, index=company_list.index(default_company))
+model_list = sorted(df[df["회사"] == selected_company]["모델"].dropna().unique())
+selected_model = st.selectbox("🚗 모델 선택", model_list, index=model_list.index(default_model) if default_model in model_list else 0)
 
-# 모델 및 연시 범위
-model_list = df[df["\ud68c\uc0ac"] == selected_company]["\ubaa8\ub378"].dropna().unique().tolist()
-if not model_list:
-    st.warning(f"\uc120\ud0dd\ud55c \ud68c\uc0ac '{selected_company}'\uc5d0 \ud574\ub2f9\ud558\ub294 \ubaa8\ub378\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.")
-    st.stop()
+view_option = st.radio("📊 보기 옵션 선택", ["연식별 시세", "키로수별 시세"], horizontal=True)
 
-model_years = df[df["\ubaa8\ub378"].isin(model_list)].groupby("\ubaa8\ub378")["\uc5f0\uc2dc(\uc218)"].agg(["min", "max"])
-model_summary = pd.DataFrame({
-    "\ubaa8\ub378": model_years.index,
-    "\uc5f0\uc2dc\ubc94\uc704": model_years.apply(lambda x: f"{int(x['min'])}\ub144~{int(x['max'])}\ub144\uc2dc", axis=1),
-})
-model_summary["\ubaa8\ub378\uba85 \ud45c\uc2dc"] = model_summary["\ubaa8\ub378"] + " (" + model_summary["\uc5f0\uc2dc\ubc94\uc704"] + ")"
+filtered = df[(df["회사"] == selected_company) & (df["모델"] == selected_model)]
 
-# 기본 선택
-model_options = model_summary["\ubaa8\ub378\uba85 \ud45c\uc2dc"].tolist()
-default_label = f"{default_model} ({int(model_years.loc[default_model, 'min'])}\ub144~{int(model_years.loc[default_model, 'max'])}\ub144\uc2dc)"
-default_index = model_options.index(default_label) if default_label in model_options else 0
-
-selected_display = st.selectbox("🚗 모델 선택", model_options, index=default_index)
-selected_model = selected_display.split(" (")[0]
-
-# 보기 옵션
-view_option = st.radio("\ud83d\udcca \ubcf4\uae30 \uc635\uc158 \uc120\ud0dd", ["\uc5f0\uc2dc\ubcc4 \uc2dc\uc138", "\ud0a4\ub85c\uc218\ubcc4 \uc2dc\uc138"], horizontal=True)
-
-# 데이터 필터링
-filtered = df[(df["\ud68c\uc0ac"] == selected_company) & (df["\ubaa8\ub378"] == selected_model)]
-
-def build_summary(data):
-    by_year = data.groupby("\uc5f0\uc2dc(\uc218)")["\uac00\uaca9(\uc22b\uc790)"]\
-                .mean().sort_index(ascending=False).round(0)
-    return f"{selected_model} \uc911\uace0\ucc28 \uc2dc\uc138\ub294 " + \
-           " \u00b7 ".join([f"{int(y)}\ub144\uc2dc {int(p):,}\ub9cc\uc6d0" for y, p in by_year.items()]) + " \uc785\ub2c8\ub2e4."
+# 💬 시세 요약 텍스트
+def build_summary(data, count=2):
+    recent = data.groupby("연식(수)")["가격(숫자)"].mean().sort_index(ascending=False).head(count).round(0)
+    summary = " · ".join([f"{int(y)}년식 {int(p):,}만원" for y, p in recent.items()])
+    return f"{selected_model} 중고차 시세는 {summary}입니다."
 
 st.markdown(f"💬 **{build_summary(filtered)}**")
 
-# 그래프
-if view_option == "\uc5f0\uc2dc\ubcc4 \uc2dc\uc138":
-    group_col = "\uc5f0\uc2dc(\uc218)"
-    xlabel = "\ud3c9\uade0 \uc2dc\uc138 (\ub9cc\uc6d0)"
-    title = f"📈 {selected_model} \uc5f0\uc2dc\ubcc4 \ud3c9\uade0 \uc911\uace0\ucc28 \uc2dc\uc138"
+# 📊 데이터 그룹핑
+if view_option == "연식별 시세":
+    group_col = "연식(수)"
+    xlabel = "평균 시세 (만원)"
+    title = f"📈 {selected_model} 연식별 평균 중고차 시세"
 else:
-    bin_edges = list(range(0, int(df["\ud0a4\ub85c\uc218"].max()) + 50000, 50000))
-    df["\ud0a4\ub85c\uc218\uad6c\uac04"] = pd.cut(df["\ud0a4\ub85c\uc218"], bins=bin_edges,
-                              labels=[f"{x//10000}~{(x+50000)//10000}\ub9cckm" for x in bin_edges[:-1]])
-    filtered["\ud0a4\ub85c\uc218\uad6c\uac04"] = df["\ud0a4\ub85c\uc218\uad6c\uac04"]
-    group_col = "\ud0a4\ub85c\uc218\uad6c\uac04"
-    xlabel = "\ud3c9\uade0 \uc2dc\uc138 (\ub9cc\uc6d0)"
-    title = f"📉 {selected_model} \ud0a4\ub85c\uc218\ubcc4 \ud3c9\uade0 \uc911\uace0\ucc28 \uc2dc\uc138"
+    bin_edges = list(range(0, int(df["키로수"].max()) + 50000, 50000))
+    df["키로수구간"] = pd.cut(df["키로수"], bins=bin_edges, labels=[f"{x//1000}~{(x+50000)//1000}천km" for x in bin_edges[:-1]])
+    filtered["키로수구간"] = df["키로수구간"]
+    group_col = "키로수구간"
+    xlabel = "평균 시세 (만원)"
+    title = f"📉 {selected_model} 키로수별 평균 중고차 시세"
 
-grouped = filtered.groupby(group_col)["\uac00\uaca9(\uc22b\uc790)"].mean().dropna().sort_index(ascending=False)
+grouped = filtered.groupby(group_col)["가격(숫자)"].mean().dropna().sort_index(ascending=False)
 
+# 📉 그래프 시각화
 st.subheader(title)
 fig, ax = plt.subplots(figsize=(7, len(grouped) * 0.45))
 bars = ax.barh(grouped.index.astype(str), grouped.values, color="orange")
@@ -87,24 +64,27 @@ ax.set_xlabel(xlabel)
 
 for bar in bars:
     width = bar.get_width()
-    ax.text(width + 30, bar.get_y() + bar.get_height()/2, f"{int(width):,}\ub9cc\uc6d0", va='center', fontsize=9)
+    ax.text(width + 30, bar.get_y() + bar.get_height()/2, f"{int(width):,}만원", va='center', fontsize=9)
 
 st.pyplot(fig)
 
-st.subheader("📌 \uc694\uc57d \uc815\ubcf4")
+# 📌 요약 정보
+st.subheader("📌 요약 정보")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("\ud3c9\uade0 \uc5f0\uc2dc", f"{int(filtered['\uc5f0\uc2dc(\uc218)'].mean())}\ub144")
+    st.metric("평균 연식", f"{int(filtered['연식(수)'].mean())}년")
 with col2:
-    st.metric("\ud3c9\uade0 \ud0a4\ub85c\uc218", f"{int(filtered['\ud0a4\ub85c\uc218'].mean()):,} km")
+    st.metric("평균 키로수", f"{int(filtered['키로수'].mean()):,} km")
 with col3:
-    st.metric("\ub9e4\ubb3c \uc218", f"{len(filtered)}\uac74")
+    st.metric("매물 수", f"{len(filtered)}건")
 
-with st.expander("📋 \ub9e4\ubb3c \ubaa9록 \ubcf4기", expanded=False):
-    st.dataframe(filtered.reset_index(drop=True)[["\ud68c\uc0ac", "\ubaa8\ub378", "\uc5f0\uc2dc(\uc218)", "\ud0a4\ub85c\uc218", "\uac00\uaca9(\uc22b\uc790)"]])
+# 📋 매물 목록
+with st.expander("📋 매물 목록 보기", expanded=False):
+    st.dataframe(filtered.reset_index(drop=True)[["회사", "모델", "연식(수)", "키로수", "가격(숫자)"]])
 
-with st.expander("📈 \uc911\uace0\ucc28 \uc2dc\uc138 \uad00\ub828 \ud29c\ud1a0\uc9c0 \ubcf4기"):
-    st.info("""
-    ✔ 신차 대비 감가율이 높은 차량은 2~3년산 모델에서 시세 경쟁력이 있습니다.\n
-    ✔ 동일 모델의 엔로 유형(가섹린/LPG/디젯)에 따라 시세 차이가 크니 주의하세요.
-    """)
+# 💡 사용자 체류 팁
+with st.expander("📈 중고차 시세 관련 팁 보기"):
+    st.info(
+        "✔ 신차 대비 감가율이 높은 차량은 2~3년차 모델에서 시세 경쟁력이 있습니다.\\n"
+        "✔ 동일 모델의 연료 유형(가솔린/LPG/디젤)에 따라 시세 차이가 크므로 주의하세요."
+    )
