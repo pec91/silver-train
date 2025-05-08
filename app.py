@@ -1,71 +1,107 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import os
 
-# ✅ 한글 폰트 설정 (NanumGothic.ttf 를 같은 디렉토리에 업로드한 경우)
-font_path = os.path.join(os.getcwd(), "NanumGothic.ttf")
-if os.path.exists(font_path):
-    fm.fontManager.addfont(font_path)
-    plt.rcParams["font.family"] = "NanumGothic"
-else:
-    st.warning("한글 폰트 파일이 없습니다. NanumGothic.ttf를 업로드하세요.")
+# 📁 한글 폰트 설정 (나눔고딕)
+plt.rcParams['font.family'] = 'NanumGothic'
+plt.rcParams['axes.unicode_minus'] = False
 
-# ✅ 페이지 설정
-st.set_page_config(page_title="중고차 최신시세조회", page_icon="🚗", layout="wide")
-st.title("🚗 중고차 최신시세조회")
-st.markdown("간단한 필터를 통해 원하는 중고차 모델의 **연식별 및 키로수별 평균 시세**를 확인할 수 있습니다.")
+st.set_page_config(page_title="중고차 최신시세조회", page_icon="🚗", layout="centered")
 
-# ✅ 데이터 불러오기
-df = pd.read_excel("used_cars.xlsx")
+# 📊 데이터 불러오기
+@st.cache_data
+def load_data():
+    return pd.read_excel("used_cars.xlsx", sheet_name="Sheet1")
 
-# ✅ '그랜저 IG'만 필터링
-df = df[df["모델"].str.contains("그랜저 IG", na=False)]
+df = load_data()
 
-# ✅ 모델 정보 표시용
-model_name = "그랜저 IG"
-min_year = df["연식(수)"].min()
-max_year = df["연식(수)"].max()
-st.selectbox("🚘 모델 선택", [f"{model_name} ({min_year}년~{max_year}년식)"], index=0)
+# 🧱 초기 기본값 설정
+default_company = "현대"
+default_model = "그랜저 IG"
 
-# ✅ 보기 옵션 선택
-st.markdown("### 📊 보기 옵션 선택")
-view_option = st.radio("보기 옵션", ["연식별 시세", "키로수별 시세"])
+# 📌 제목 및 설명
+st.markdown("""
+<h1 style='color:darkblue;'>🚗 중고차 최신시세조회</h1>
+<p>간단한 필터를 통해 원하는 중고차 모델의 <b>연식별 및 키로수별 평균 시세</b>를 확인할 수 있습니다.</p>
+""", unsafe_allow_html=True)
 
-# ✅ 시세 요약
-summary = df.groupby("연식(수)")["가격(숫자)"].mean().sort_index(ascending=False).astype(int)
-summary_text = " · ".join([f"{year}년식 {price:,}만원" for year, price in summary.items()])
-st.markdown(f"💬 **{model_name} 중고차 시세는** {summary_text} 입니다.")
+# 🚘 회사 선택
+company_list = sorted(df["회사"].dropna().unique())
+selected_company = st.selectbox("🚘 제조사 선택", company_list, index=company_list.index(default_company))
 
-# ✅ 그래프 출력
-if view_option == "연식별 시세":
-    st.markdown(f"### 📈 {model_name} 연식별 시세 평균 중고차 시세")
-    fig, ax = plt.subplots(figsize=(8, len(summary) * 0.6))
-    summary.sort_index(ascending=True).plot(kind="barh", color="orange", ax=ax)
-    for i, (value) in enumerate(summary.sort_index(ascending=True).values):
-        ax.text(value + 30, i, f"{value:,}만원", va="center")
+# 🚗 모델 선택
+model_list = sorted(df[df["회사"] == selected_company]["모델"].dropna().unique())
+model_years = df[df["모델"].isin(model_list)].groupby("모델")["연식(수)"].agg(["min", "max"])
+model_options = [f"{m} ({int(model_years.loc[m, 'min'])}년~{int(model_years.loc[m, 'max'])}년식)" for m in model_list]
+def_label = f"{default_model} ({int(model_years.loc[default_model, 'min'])}년~{int(model_years.loc[default_model, 'max'])}년식)"
+selected_label = st.selectbox("🚗 모델 선택", model_options, index=model_options.index(def_label))
+selected_model = selected_label.split(" (")[0]
+
+# 📋 보기 옵션 선택
+tab1, tab2 = st.tabs(["연식별 시세", "키로수별 시세"])
+
+# 🔍 선택된 모델 필터링
+df_selected = df[(df["회사"] == selected_company) & (df["모델"] == selected_model)]
+
+# 📢 요약 정보 함수
+def summary_text(data):
+    by_year = data.groupby("연식(수)")["가격(숫자)"].mean().sort_index(ascending=False).round(0)
+    return f"{selected_model} 중고차 시세는 " + " · ".join([f"{int(y)}년식 {int(p):,}만원" for y, p in by_year.items()]) + " 입니다."
+
+# ✅ 연식별 시세
+def show_year_plot():
+    st.markdown(f"💬 **{summary_text(df_selected)}**")
+    grouped = df_selected.groupby("연식(수)")["가격(숫자)"].mean().sort_index(ascending=False)
+    fig, ax = plt.subplots(figsize=(7, len(grouped) * 0.5))
+    bars = ax.barh(grouped.index.astype(str), grouped.values, color="orange")
+    ax.invert_yaxis()
     ax.set_xlabel("평균 시세 (만원)")
-    ax.set_ylabel("연식")
+    ax.set_title(f"📈 {selected_model} 연식별 시세 평균 중고차 시세")
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(width + 30, bar.get_y() + bar.get_height()/2, f"{int(width):,}만원", va='center')
     st.pyplot(fig)
 
-else:
-    st.markdown(f"### 📉 {model_name} 키로수별 평균 중고차 시세")
-    bins = list(range(0, 410000, 50000))
-    labels = [f"{int(b/10000)}만~{int((b+50000)/10000)}만km" for b in bins[:-1]]
-    df["키로수구간"] = pd.cut(df["키로수"], bins=bins, labels=labels, include_lowest=True)
-    km_avg = df.groupby("키로수구간")["가격(숫자)"].mean().dropna().astype(int)
-    fig, ax = plt.subplots(figsize=(8, len(km_avg) * 0.6))
-    km_avg.sort_index(ascending=True).plot(kind="barh", color="orange", ax=ax)
-    for i, value in enumerate(km_avg.values):
-        ax.text(value + 30, i, f"{value:,}만원", va="center")
+# ✅ 키로수별 시세
+
+def show_km_plot():
+    bins = list(range(0, int(df["키로수"].max()) + 50000, 50000))
+    labels = [f"{x//10000+1}만km" for x in bins[:-1]]
+    df_selected["키로수구간"] = pd.cut(df_selected["키로수"], bins=bins, labels=labels, right=False)
+    grouped = df_selected.groupby("키로수구간")["가격(숫자)"].mean().dropna().sort_index(ascending=False)
+    st.markdown(f"💬 **{summary_text(df_selected)}**")
+    fig, ax = plt.subplots(figsize=(7, len(grouped) * 0.5))
+    bars = ax.barh(grouped.index.astype(str), grouped.values, color="orange")
+    ax.invert_yaxis()
     ax.set_xlabel("평균 시세 (만원)")
-    ax.set_ylabel("키로수 구간")
+    ax.set_title(f"📉 {selected_model} 키로수별 시세 평균 중고차 시세")
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(width + 30, bar.get_y() + bar.get_height()/2, f"{int(width):,}만원", va='center')
     st.pyplot(fig)
 
-# ✅ 매물 보기
+with tab1:
+    show_year_plot()
+with tab2:
+    show_km_plot()
+
+# 📊 요약 지표
+st.subheader("📌 요약 정보")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("평균 연식", f"{int(df_selected['연식(수)'].mean())}년")
+with col2:
+    st.metric("평균 키로수", f"{int(df_selected['키로수'].mean()):,} km")
+with col3:
+    st.metric("매물 수", f"{len(df_selected)}건")
+
+# 📋 매물 목록
 with st.expander("📋 매물 목록 보기", expanded=False):
-    st.dataframe(df[["회사", "모델", "연식(수)", "키로수", "가격(숫자)"]].rename(columns={
-        "연식(수)": "연식",
-        "가격(숫자)": "가격(만원)"
-    }))
+    st.dataframe(df_selected.reset_index(drop=True)[["회사", "모델", "연식(수)", "키로수", "가격(숫자)"]])
+
+# ℹ️ 팁
+with st.expander("📈 중고차 시세 관련 팁 보기"):
+    st.info("""
+✔ 신차 대비 감가율이 높은 차량은 2~3년차 모델에서 시세 경쟁력이 있습니다.
+✔ 동일 모델의 연료 유형(가솔린/LPG/디젤)에 따라 시세 차이가 크므로 주의하세요.
+""")
